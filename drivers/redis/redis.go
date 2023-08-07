@@ -18,7 +18,7 @@ import (
 const compressedDataPrefix = "COMPRESSED:"
 
 // RedisCacheService is a service for caching data in Redis
-type redisCacheService struct {
+type driver struct {
 	mu       sync.Mutex
 	client   *redis.Client
 	prefix   string
@@ -33,25 +33,25 @@ type Options struct {
 	Prefix             string
 }
 
-func NewCacheService(options *Options) cachemar.Cacher {
+func New(options *Options) cachemar.Cacher {
 	client := redis.NewClient(&redis.Options{
 		Addr:     options.DSN,
 		Password: options.Password, // Set password if required
 		DB:       options.Database, // Use default database
 	})
 
-	return &redisCacheService{
+	return &driver{
 		client:   client,
 		compress: options.CompressionEnabled,
 		prefix:   options.Prefix,
 	}
 }
 
-func (c *redisCacheService) Name() string {
+func (c *driver) Name() string {
 	return "cache"
 }
 
-func (c *redisCacheService) Init() error {
+func (c *driver) Init() error {
 	statusCmd := c.client.Ping(context.Background())
 	if err := statusCmd.Err(); err != nil {
 		return err
@@ -60,15 +60,15 @@ func (c *redisCacheService) Init() error {
 	return nil
 }
 
-func (c *redisCacheService) Run(ctx context.Context) error {
+func (c *driver) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *redisCacheService) Stop() error {
+func (c *driver) Stop() error {
 	return c.client.Close()
 }
 
-func (c *redisCacheService) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+func (c *driver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -119,7 +119,7 @@ func compressData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *redisCacheService) Get(ctx context.Context, key string, value interface{}) error {
+func (c *driver) Get(ctx context.Context, key string, value interface{}) error {
 	finalKey := c.keyWithPrefix(key)
 
 	data, err := c.client.Get(ctx, finalKey).Bytes()
@@ -160,7 +160,7 @@ func decompressData(compressedData []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *redisCacheService) Remove(ctx context.Context, key string) error {
+func (c *driver) Remove(ctx context.Context, key string) error {
 	finalKey := c.keyWithPrefix(key)
 
 	err := c.client.Del(ctx, finalKey).Err()
@@ -171,7 +171,7 @@ func (c *redisCacheService) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *redisCacheService) RemoveByTag(ctx context.Context, tag string) error {
+func (c *driver) RemoveByTag(ctx context.Context, tag string) error {
 	keyForTags := getTagKey(tag)
 
 	keys, err := c.client.SMembers(ctx, keyForTags).Result()
@@ -188,7 +188,7 @@ func (c *redisCacheService) RemoveByTag(ctx context.Context, tag string) error {
 
 	return nil
 }
-func (c *redisCacheService) Exists(ctx context.Context, key string) (bool, error) {
+func (c *driver) Exists(ctx context.Context, key string) (bool, error) {
 	finalKey := c.keyWithPrefix(key)
 
 	cmd := c.client.Exists(ctx, finalKey)
@@ -198,7 +198,7 @@ func (c *redisCacheService) Exists(ctx context.Context, key string) (bool, error
 	return cmd.Val() > 0, nil
 }
 
-func (c *redisCacheService) Increment(ctx context.Context, key string) error {
+func (c *driver) Increment(ctx context.Context, key string) error {
 	finalKey := c.keyWithPrefix(key)
 
 	cmd := c.client.Incr(ctx, finalKey)
@@ -208,7 +208,7 @@ func (c *redisCacheService) Increment(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *redisCacheService) Decrement(ctx context.Context, key string) error {
+func (c *driver) Decrement(ctx context.Context, key string) error {
 	finalKey := c.keyWithPrefix(key)
 
 	cmd := c.client.Decr(ctx, finalKey)
@@ -218,7 +218,7 @@ func (c *redisCacheService) Decrement(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *redisCacheService) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+func (c *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
 	keyForTags := getTagKey(tag)
 
 	cmd := c.client.SMembers(ctx, keyForTags)
@@ -228,7 +228,7 @@ func (c *redisCacheService) GetKeysByTag(ctx context.Context, tag string) ([]str
 	return cmd.Val(), nil
 }
 
-func (c *redisCacheService) RemoveByTags(ctx context.Context, tags []string) error {
+func (c *driver) RemoveByTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
 		err := c.RemoveByTag(ctx, tag)
 		if err != nil {
@@ -243,6 +243,19 @@ func getTagKey(tag string) string {
 	return fmt.Sprintf("tag:%s", tag)
 }
 
-func (c *redisCacheService) keyWithPrefix(key string) string {
+func (c *driver) keyWithPrefix(key string) string {
 	return fmt.Sprintf("%s:%s", c.prefix, key)
+}
+
+func (c *driver) Close() error {
+	return c.client.Close()
+}
+
+func (d *driver) Ping() error {
+	ctx := context.Background()
+	err := d.client.Ping(ctx).Err()
+	if err != nil {
+		return fmt.Errorf("failed to ping Redis: %v", err)
+	}
+	return nil
 }

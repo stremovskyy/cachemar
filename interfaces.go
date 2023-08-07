@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Cacher is an interface that defines all operations a cache service should support.
+// Cacher is an interface that defines all operations a cache manager should support.
 type Cacher interface {
 	// Set stores a key-value pair in the cache with the specified ttl (time-to-live) duration and tags.
 	Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error
@@ -33,22 +33,32 @@ type Cacher interface {
 
 	// GetKeysByTag retrieves all keys associated with a given tag.
 	GetKeysByTag(ctx context.Context, tag string) ([]string, error)
+	// Ping checks if the cache manager is up and running.
+	Ping() error
+	// Close closes the cache manager.
+	Close() error
 }
 
-// Service is an interface that defines all operations a cache service manager should support.
-type Service interface {
-	// Register adds a cache service to the service manager and assigns it a name.
-	Register(name string, service Cacher)
+// Manager is an interface that defines all operations a cache  manager should support.
+type Manager interface {
+	// Register adds a cache manager to the  manager and assigns it a name.
+	Register(name string, manager Cacher)
 
-	// Use retrieves a registered cache service by its name.
+	// Use retrieves a registered cache manager by its name.
 	Use(name string) Cacher
 
-	// Current retrieves the current cache service being used by the service manager.
+	// Current retrieves the current cache manager being used by the  manager.
 	Current() Cacher
 
-	// SetCurrent sets the current cache service the service manager should use.
+	// SetCurrent sets the current cache manager the  manager should use.
 	SetCurrent(name string)
 
-	// Cacher is embedded to allow the service manager to act as a Cacher itself, proxying calls to the current cache service.
+	// Ping checks ALL cache managers are up and running.
+	Ping() error
+
+	// Close closes ALL cache managers.
+	Close() error
+
+	// Cacher is embedded to allow the manager  to act as a Cacher itself, proxying calls to the current cache manager.
 	Cacher
 }

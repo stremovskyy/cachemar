@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func setupCachemar() cachemar.Service {
+func setupCachemar() cachemar.Manager {
 	cachemarService := cachemar.New()
 
 	// Register Redis cache service
@@ -20,7 +20,7 @@ func setupCachemar() cachemar.Service {
 		Database: 0,
 		Prefix:   "test",
 	}
-	redisCacheService := redis.NewCacheService(redisOptions)
+	redisCacheService := redis.New(redisOptions)
 	cachemarService.Register("redis", redisCacheService)
 
 	// Register Memcached cache service
@@ -28,7 +28,7 @@ func setupCachemar() cachemar.Service {
 		Servers: []string{"localhost:11211"},
 		Prefix:  "test",
 	}
-	memcachedCacheService := memcached.NewCacheService(memcachedOptions)
+	memcachedCacheService := memcached.New(memcachedOptions)
 	cachemarService.Register("memcached", memcachedCacheService)
 
 	return cachemarService

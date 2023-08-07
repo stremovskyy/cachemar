@@ -20,20 +20,20 @@ type Item struct {
 	ExpiryTime time.Time
 }
 
-type memoryCacheService struct {
+type driver struct {
 	mu    sync.Mutex
 	items map[string]Item
 }
 
-func NewMemoryCacheService() cachemar.Cacher {
-	return &memoryCacheService{
+func New() cachemar.Cacher {
+	return &driver{
 		items: make(map[string]Item),
 	}
 }
 
-func (c *memoryCacheService) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -47,7 +47,7 @@ func (c *memoryCacheService) Set(ctx context.Context, key string, value interfac
 		return err
 	}
 
-	c.items[key] = Item{
+	d.items[key] = Item{
 		Value:      compressedValue,
 		Tags:       tags,
 		ExpiryTime: time.Now().Add(ttl),
@@ -71,11 +71,11 @@ func compressData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *memoryCacheService) Get(ctx context.Context, key string, value interface{}) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) Get(ctx context.Context, key string, value interface{}) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	item, exists := c.items[key]
+	item, exists := d.items[key]
 	if !exists || item.ExpiryTime.Before(time.Now()) {
 		return cachemar.ErrNotFound
 	}
@@ -113,22 +113,22 @@ func decompressData(data []byte) ([]byte, error) {
 	return decompressedData, nil
 }
 
-func (c *memoryCacheService) Remove(ctx context.Context, key string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) Remove(ctx context.Context, key string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	delete(c.items, key)
+	delete(d.items, key)
 	return nil
 }
 
-func (c *memoryCacheService) RemoveByTag(ctx context.Context, tag string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	for key, item := range c.items {
+	for key, item := range d.items {
 		for _, itemTag := range item.Tags {
 			if itemTag == tag {
-				delete(c.items, key)
+				delete(d.items, key)
 				break
 			}
 		}
@@ -136,31 +136,31 @@ func (c *memoryCacheService) RemoveByTag(ctx context.Context, tag string) error 
 	return nil
 }
 
-func (c *memoryCacheService) RemoveByTags(ctx context.Context, tags []string) error {
+func (d *driver) RemoveByTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
-		if err := c.RemoveByTag(ctx, tag); err != nil {
+		if err := d.RemoveByTag(ctx, tag); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *memoryCacheService) Exists(ctx context.Context, key string) (bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	item, exists := c.items[key]
+	item, exists := d.items[key]
 	if !exists || item.ExpiryTime.Before(time.Now()) {
 		return false, nil
 	}
 	return true, nil
 }
 
-func (m *memoryCacheService) Increment(ctx context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (d *driver) Increment(ctx context.Context, key string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	item, found := m.items[key]
+	item, found := d.items[key]
 	if !found {
 		return errors.New("key not found")
 	}
@@ -176,11 +176,11 @@ func (m *memoryCacheService) Increment(ctx context.Context, key string) error {
 	return nil
 }
 
-func (m *memoryCacheService) Decrement(ctx context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (d *driver) Decrement(ctx context.Context, key string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	item, found := m.items[key]
+	item, found := d.items[key]
 	if !found {
 		return errors.New("key not found")
 	}
@@ -196,12 +196,12 @@ func (m *memoryCacheService) Decrement(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *memoryCacheService) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	var activeKeys []string
-	for key, item := range c.items {
+	for key, item := range d.items {
 		for _, itemTag := range item.Tags {
 			if itemTag == tag {
 				activeKeys = append(activeKeys, key)
@@ -211,4 +211,20 @@ func (c *memoryCacheService) GetKeysByTag(ctx context.Context, tag string) ([]st
 	}
 
 	return activeKeys, nil
+}
+
+func (d *driver) Close() error {
+	return nil
+}
+
+func (d *driver) Flush() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.items = make(map[string]Item)
+	return nil
+}
+
+func (d *driver) Ping() error {
+	return nil
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func TestMemoryCacheService(t *testing.T) {
-	cache := memory.NewMemoryCacheService()
+	cache := memory.New()
 	ctx := context.Background()
 	tags := []string{"tag1", "tag2"}
 

@@ -14,7 +14,7 @@ const testPrefix = "test"
 var memcacheCacheService cachemar.Cacher
 
 func setup() {
-	memcacheCacheService = memcached.NewCacheService(&memcached.Options{
+	memcacheCacheService = memcached.New(&memcached.Options{
 		Servers: []string{"localhost:11211"},
 		Prefix:  testPrefix,
 	})

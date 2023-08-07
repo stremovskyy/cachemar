@@ -17,7 +17,7 @@ func TestRedisCacheService(t *testing.T) {
 		Prefix:             "prefix",
 	}
 
-	cacheService := redis.NewCacheService(options)
+	cacheService := redis.New(options)
 
 	// Test Set
 	err := cacheService.Set(context.Background(), "testKey", "testValue", time.Minute, []string{"tag1", "tag2"})
