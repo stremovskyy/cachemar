@@ -5,14 +5,24 @@ CacheMar is a cache management library designed to provide a unified and easy-to
 
 ## Table of Contents
 
-* Features 
-* Installation
-* Getting Started
-* Supported Drivers
-* Usage
-* Examples
-* Contributing
-* License
+* [Features](#features)
+* [Installation](#installation)
+* [Getting Started](#getting-started)
+* [Supported Drivers](#supported-drivers)
+* [Usage](#usage)
+    * [Creating a CacheMar Service](#creating-a-cachemar-service)
+    * [Registering Caching Drivers](#registering-caching-drivers)
+    * [Setting the Current Cache Driver](#setting-the-current-cache-driver)
+    * [Using the Cache](#using-the-cache)
+    * [Using Tags for Invalidation](#using-tags-for-invalidation)
+    * [Other Cache Operations](#other-cache-operations)
+* [Examples](#examples)
+    * [In-Memory Cache Example](#in-memory-cache-example)
+    * [Memcached Example](#memcached-example)
+    * [Redis Example](#redis-example)
+    * [Using Tags for Invalidation](#using-tags-for-invalidation)
+* [Contributing](#contributing)
+* [License](#license)
 
 ## Features
 * Unified and consistent API for different caching drivers.
