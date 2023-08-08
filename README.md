@@ -1,7 +1,6 @@
 # CacheMar - Cache Management Library
 
-CacheMar is a cache management library designed to provide a unified and easy-to-use interface for working with various caching systems. It allows developers to switch between different caching drivers without changing their code significantly. The library currently supports two caching drivers: an in-memory cache and Memcached.
-
+CacheMar is a versatile cache management library crafted to offer a seamless interface across multiple caching systems. With its intuitive design, developers can effortlessly transition between different caching drivers, ensuring adaptability without substantial code alterations. Presently, CacheMar extends support to both in-memory caching and Memcached, with the flexibility for future expansions.
 
 ## Table of Contents
 
@@ -15,6 +14,9 @@ CacheMar is a cache management library designed to provide a unified and easy-to
     * [Setting the Current Cache Driver](#setting-the-current-cache-driver)
     * [Using the Cache](#using-the-cache)
     * [Using Tags for Invalidation](#using-tags-for-invalidation)
+    * [Using Chains](#using-chains)
+    * [Setting a Fallback](#setting-a-fallback)
+    * [Overriding the Chain](#overriding-the-chain)
     * [Other Cache Operations](#other-cache-operations)
 * [Examples](#examples)
     * [In-Memory Cache Example](#in-memory-cache-example)
@@ -25,12 +27,17 @@ CacheMar is a cache management library designed to provide a unified and easy-to
 * [License](#license)
 
 ## Features
-* Unified and consistent API for different caching drivers.
-* Support for in-memory caching and Memcached.
-* Ability to easily switch between caching drivers with minimal code changes.
-* Tag-based caching for easy invalidation.
-* Increment and decrement operations for integer values.
-* Compatibility with Go's context package for request-scoped caching.
+
+* **Unified API**: A consistent interface across various caching drivers, making it easy to switch or combine them.
+* **Multiple Drivers**: Built-in support for in-memory caching, Memcached, and more. Extendable for other caching solutions.
+* **Dynamic Switching**: Seamlessly switch between caching drivers with minimal code changes.
+* **Chaining Mechanism**: Chain multiple cache managers for a fallback mechanism. If one manager doesn't have the data or encounters an error, the next one in the chain is used.
+* **Tag-based Caching**: Invalidate cache entries easily using tags.
+* **Numeric Operations**: Increment and decrement operations for integer values in the cache.
+* **Context Compatibility**: Fully compatible with Go's context package, allowing for request-scoped caching.
+* **Fallback Support**: Set a default fallback cache manager to be used if none in the chain have the data.
+* **Chain Override**: Temporarily override the chain for specific calls without affecting the original configuration.
+
 
 ## Installation
 To use CacheMar in your Go project, you can install it using the go get command:
@@ -52,11 +59,12 @@ import (
 ```
 
 ## Supported Drivers
-Currently, CacheMar supports the following caching drivers:
+CacheMar seamlessly integrates with a variety of caching drivers, including:
 
-1. In-Memory Cache: A simple in-memory cache implemented using Go's sync.Map. This driver is suitable for applications where a temporary and lightweight caching solution is needed.
-2. Memcached: CacheMar provides an interface to interact with Memcached, a distributed caching system. This driver is suitable for larger-scale applications that require caching across multiple instances or machines.
-3. Redis: CacheMar provides an interface to interact with Redis, an in-memory data structure store. This driver is suitable for larger-scale applications that require caching across multiple instances or machines.
+1. **In-Memory Cache**: Leveraging Go's sync.Map, this driver offers a straightforward in-memory caching solution. It's an ideal choice for applications seeking a temporary and nimble caching mechanism.
+2. **Memcached**: With CacheMar, interfacing with Memcached—a renowned distributed caching system—becomes effortless. It's tailored for expansive applications necessitating cache distribution across multiple instances or servers.
+3. **Redis**: CacheMar also facilitates smooth interactions with Redis, a prominent in-memory data structure store. Like Memcached, it's apt for large-scale applications aiming for distributed caching solutions.
+
 
 ## Usage
 ### Creating a CacheMar Service
@@ -134,6 +142,39 @@ err = cacheService.RemoveByTag(ctx, "tag1")
 if err != nil {
     // Handle error
 }
+```
+
+### Using Chains
+CacheMar supports chaining multiple cache managers together for a fallback mechanism. If one manager doesn't have the data or encounters an error, the next one in the chain is used. You can create a chain of cache managers using cachemar.Chain():
+
+   ```go
+   manager := cachemar.New()
+manager.Register("redis", redisCache)
+manager.Register("memory", memoryCache)
+manager.SetCurrent("redis")
+   ```
+
+### Using Chaining
+With chaining, you can specify an order of cache managers. If the first one doesn't have the data, the next one is queried, and so on.
+```go
+chainedManager := manager.Chain()
+chainedManager.AddToChain("redis")
+chainedManager.AddToChain("memory")
+chainedManager.Get(ctx, "somekey", &value) // This will first check redis, then memory.
+
+```
+
+### Setting a Fallback
+A fallback cache manager can be set which will be queried if none in the chain have the data
+
+```go
+chainedManager.SetFallback("memory")
+```
+
+### Overriding the Chain
+For specific calls, you can override the chain without affecting the original chain configuration.
+```go
+chainedManager.Override("memory", "redis").Get(ctx, "somekey", &value) // This will first check memory, then redis.
 ```
 
 ### Other Cache Operations
@@ -290,6 +331,40 @@ func main() {
         }
 
         fmt.Println("Retrieved Value:", retrievedValue)
+    }
+
+```
+### Chaining Multiple Cache Managers Example
+
+```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "time"
+
+        "github.com/stremovskyy/cachemar"
+    )
+
+    func main() {
+      // Initialize CacheMar and register cache managers
+      manager := cachemar.New()
+      manager.Register("inMemory", inMemoryCache)
+      manager.Register("memcached", memcachedCache)
+      manager.Register("redis", redisCache)
+
+      // Create a chain of cache managers
+      chainedManager := manager.Chain()
+      chainedManager.AddToChain("inMemory")
+      chainedManager.AddToChain("memcached")
+      chainedManager.AddToChain("redis")
+
+      // Use the chained manager
+      err := chainedManager.Get(ctx, "someKey", &value)
+	  
+	  // Or in manager 
+	  err := manager.Chain().Get(ctx, "someKey", &value)
     }
 
 ```

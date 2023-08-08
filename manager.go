@@ -8,8 +8,16 @@ import (
 
 // manager is an implementation of the Manager interface.
 type manager struct {
-	managers map[string]Cacher // A map to store registered cache managers with their names as keys.
-	current  string            // The name of the current cache manager being used.
+	managers      map[string]Cacher // A map to store registered cache managers with their names as keys.
+	current       string            // The name of the current cache manager being used.
+	chainInstance ChainedManager    // The chained manager instance.
+}
+
+// New creates and returns a new instance of the manager.
+func New() Manager {
+	return &manager{
+		managers: make(map[string]Cacher),
+	}
 }
 
 // Register adds a cache manager to the manager  and assigns it a name.
@@ -83,7 +91,7 @@ func (c *manager) GetKeysByTag(ctx context.Context, tag string) ([]string, error
 	return c.Current().GetKeysByTag(ctx, tag)
 }
 
-// SelfCheck forwards the "Ping" operation to the current cache manager.
+// Ping forwards the "Ping" operation to the current cache manager.
 func (c *manager) Ping() error {
 	errors := make([]error, 0)
 
@@ -101,6 +109,7 @@ func (c *manager) Ping() error {
 	return nil
 }
 
+// Close forwards the "Close" operation to the current cache manager.
 func (d *manager) Close() error {
 	errors := make([]error, 0)
 
@@ -118,9 +127,10 @@ func (d *manager) Close() error {
 	return nil
 }
 
-// New creates and returns a new instance of the manager.
-func New() Manager {
-	return &manager{
-		managers: make(map[string]Cacher),
+// Chain returns a ChainedManager instance.
+func (c *manager) Chain() ChainedManager {
+	if c.chainInstance == nil {
+		c.chainInstance = newChained(c)
 	}
+	return c.chainInstance
 }

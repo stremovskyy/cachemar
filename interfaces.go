@@ -59,6 +59,19 @@ type Manager interface {
 	// Close closes ALL cache managers.
 	Close() error
 
+	// Chain creates a new ChainedManager that can be used to chain multiple cache managers together.
+	Chain() ChainedManager
+
 	// Cacher is embedded to allow the manager  to act as a Cacher itself, proxying calls to the current cache manager.
 	Cacher
+}
+
+// ChainedManager is a cache manager that allows multiple cache managers to be chained together.
+type ChainedManager interface {
+	Manager
+
+	SetFallback(name string)
+	AddToChain(name string)
+	RemoveFromChain(name string)
+	Override(names ...string) ChainedManager
 }
