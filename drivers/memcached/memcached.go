@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/stremovskyy/cachemar"
 	"strings"
 	"time"
+
+	"github.com/bradfitz/gomemcache/memcache"
+
+	"github.com/stremovskyy/cachemar"
 )
 
-type driver struct {
+type memcached struct {
 	client *memcache.Client
 	prefix string
 }
@@ -23,13 +25,13 @@ type Options struct {
 func New(options *Options) cachemar.Cacher {
 	client := memcache.New(options.Servers...)
 
-	return &driver{
+	return &memcached{
 		client: client,
 		prefix: options.Prefix,
 	}
 }
 
-func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+func (d *memcached) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to serialize value: %v", err)
@@ -73,7 +75,7 @@ func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl tim
 	return nil
 }
 
-func (d *driver) Get(ctx context.Context, key string, value interface{}) error {
+func (d *memcached) Get(ctx context.Context, key string, value interface{}) error {
 	finalKey := d.keyWithPrefix(key)
 
 	item, err := d.client.Get(finalKey)
@@ -92,7 +94,7 @@ func (d *driver) Get(ctx context.Context, key string, value interface{}) error {
 	return nil
 }
 
-func (d *driver) Remove(ctx context.Context, key string) error {
+func (d *memcached) Remove(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	err := d.client.Delete(finalKey)
@@ -103,7 +105,7 @@ func (d *driver) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
+func (d *memcached) RemoveByTag(ctx context.Context, tag string) error {
 	keyForTags := getTagKey(tag)
 
 	item, err := d.client.Get(keyForTags)
@@ -122,7 +124,7 @@ func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
 	return nil
 }
 
-func (d *driver) RemoveByTags(ctx context.Context, tags []string) error {
+func (d *memcached) RemoveByTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
 		err := d.RemoveByTag(ctx, tag)
 		if err != nil {
@@ -137,11 +139,11 @@ func getTagKey(tag string) string {
 	return fmt.Sprintf("tag:%s", tag)
 }
 
-func (d *driver) keyWithPrefix(key string) string {
+func (d *memcached) keyWithPrefix(key string) string {
 	return fmt.Sprintf("%s:%s", d.prefix, key)
 }
 
-func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
+func (d *memcached) Exists(ctx context.Context, key string) (bool, error) {
 	finalKey := d.keyWithPrefix(key)
 	_, err := d.client.Get(finalKey)
 
@@ -154,7 +156,7 @@ func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
-func (d *driver) Increment(ctx context.Context, key string) error {
+func (d *memcached) Increment(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	_, err := d.client.Increment(finalKey, 1)
@@ -165,7 +167,7 @@ func (d *driver) Increment(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) Decrement(ctx context.Context, key string) error {
+func (d *memcached) Decrement(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	_, err := d.client.Decrement(finalKey, 1)
@@ -175,7 +177,7 @@ func (d *driver) Decrement(ctx context.Context, key string) error {
 
 	return nil
 }
-func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+func (d *memcached) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
 	tagKey := d.getTagKey(tag)
 	item, err := d.client.Get(tagKey)
 	if err != nil {
@@ -190,15 +192,15 @@ func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 	return keys, nil
 }
 
-func (d *driver) getTagKey(tag string) string {
+func (d *memcached) getTagKey(tag string) string {
 	return fmt.Sprintf("tag:%s", tag)
 }
 
-func (d *driver) Close() error {
+func (d *memcached) Close() error {
 	return d.client.Close()
 }
 
-func (d *driver) Ping() error {
+func (d *memcached) Ping() error {
 	err := d.client.Set(&memcache.Item{Key: "selfcheck", Value: []byte("selfcheck")})
 	if err != nil {
 		return err

@@ -20,18 +20,18 @@ type Item struct {
 	ExpiryTime time.Time
 }
 
-type driver struct {
+type memory struct {
 	mu    sync.Mutex
 	items map[string]Item
 }
 
 func New() cachemar.Cacher {
-	return &driver{
+	return &memory{
 		items: make(map[string]Item),
 	}
 }
 
-func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+func (d *memory) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -71,7 +71,7 @@ func compressData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (d *driver) Get(ctx context.Context, key string, value interface{}) error {
+func (d *memory) Get(ctx context.Context, key string, value interface{}) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -113,7 +113,7 @@ func decompressData(data []byte) ([]byte, error) {
 	return decompressedData, nil
 }
 
-func (d *driver) Remove(ctx context.Context, key string) error {
+func (d *memory) Remove(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -121,7 +121,7 @@ func (d *driver) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
+func (d *memory) RemoveByTag(ctx context.Context, tag string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -136,7 +136,7 @@ func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
 	return nil
 }
 
-func (d *driver) RemoveByTags(ctx context.Context, tags []string) error {
+func (d *memory) RemoveByTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
 		if err := d.RemoveByTag(ctx, tag); err != nil {
 			return err
@@ -145,7 +145,7 @@ func (d *driver) RemoveByTags(ctx context.Context, tags []string) error {
 	return nil
 }
 
-func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
+func (d *memory) Exists(ctx context.Context, key string) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -156,7 +156,7 @@ func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
-func (d *driver) Increment(ctx context.Context, key string) error {
+func (d *memory) Increment(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -176,7 +176,7 @@ func (d *driver) Increment(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) Decrement(ctx context.Context, key string) error {
+func (d *memory) Decrement(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -196,7 +196,7 @@ func (d *driver) Decrement(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+func (d *memory) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -213,11 +213,11 @@ func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 	return activeKeys, nil
 }
 
-func (d *driver) Close() error {
+func (d *memory) Close() error {
 	return nil
 }
 
-func (d *driver) Flush() error {
+func (d *memory) Flush() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -225,6 +225,6 @@ func (d *driver) Flush() error {
 	return nil
 }
 
-func (d *driver) Ping() error {
+func (d *memory) Ping() error {
 	return nil
 }

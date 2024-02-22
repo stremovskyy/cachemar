@@ -7,15 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/redis/go-redis/v9"
-	"github.com/stremovskyy/cachemar"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/stremovskyy/cachemar"
 )
 
 // RedisCacheService is a service for caching data in Redis
-type driver struct {
+type redisDriver struct {
 	mu       sync.Mutex
 	client   *redis.Client
 	prefix   string
@@ -31,24 +33,26 @@ type Options struct {
 }
 
 func New(options *Options) cachemar.Cacher {
-	client := redis.NewClient(&redis.Options{
-		Addr:     options.DSN,
-		Password: options.Password, // Set password if required
-		DB:       options.Database, // Use default database
-	})
+	client := redis.NewClient(
+		&redis.Options{
+			Addr:     options.DSN,
+			Password: options.Password, // Set password if required
+			DB:       options.Database, // Use default database
+		},
+	)
 
-	return &driver{
+	return &redisDriver{
 		client:   client,
 		compress: options.CompressionEnabled,
 		prefix:   options.Prefix,
 	}
 }
 
-func (d *driver) Name() string {
+func (d *redisDriver) Name() string {
 	return "cache"
 }
 
-func (d *driver) Init() error {
+func (d *redisDriver) Init() error {
 	statusCmd := d.client.Ping(context.Background())
 	if err := statusCmd.Err(); err != nil {
 		return err
@@ -57,15 +61,15 @@ func (d *driver) Init() error {
 	return nil
 }
 
-func (d *driver) Run(ctx context.Context) error {
+func (d *redisDriver) Run(ctx context.Context) error {
 	return nil
 }
 
-func (d *driver) Stop() error {
+func (d *redisDriver) Stop() error {
 	return d.client.Close()
 }
 
-func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+func (d *redisDriver) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -98,6 +102,11 @@ func (d *driver) Set(ctx context.Context, key string, value interface{}, ttl tim
 			if err != nil {
 				return fmt.Errorf("failed to add key to tag: %v", err)
 			}
+
+			err = d.client.Expire(ctx, keyForTags, ttl).Err()
+			if err != nil {
+				return fmt.Errorf("failed to set tag expiration: %v", err)
+			}
 		}
 	}
 
@@ -116,7 +125,7 @@ func compressData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *driver) Get(ctx context.Context, key string, value interface{}) error {
+func (c *redisDriver) Get(ctx context.Context, key string, value interface{}) error {
 	finalKey := c.keyWithPrefix(key)
 
 	data, err := c.client.Get(ctx, finalKey).Bytes()
@@ -165,7 +174,7 @@ func decompressData(compressedData []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (d *driver) Remove(ctx context.Context, key string) error {
+func (d *redisDriver) Remove(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	err := d.client.Del(ctx, finalKey).Err()
@@ -176,7 +185,7 @@ func (d *driver) Remove(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
+func (d *redisDriver) RemoveByTag(ctx context.Context, tag string) error {
 	keyForTags := getTagKey(tag)
 
 	keys, err := d.client.SMembers(ctx, keyForTags).Result()
@@ -191,9 +200,14 @@ func (d *driver) RemoveByTag(ctx context.Context, tag string) error {
 		}
 	}
 
+	err = d.client.Del(ctx, keyForTags).Err()
+	if err != nil {
+		return fmt.Errorf("failed to remove tag from Redis: %v", err)
+	}
+
 	return nil
 }
-func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
+func (d *redisDriver) Exists(ctx context.Context, key string) (bool, error) {
 	finalKey := d.keyWithPrefix(key)
 
 	cmd := d.client.Exists(ctx, finalKey)
@@ -203,7 +217,7 @@ func (d *driver) Exists(ctx context.Context, key string) (bool, error) {
 	return cmd.Val() > 0, nil
 }
 
-func (d *driver) Increment(ctx context.Context, key string) error {
+func (d *redisDriver) Increment(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	cmd := d.client.Incr(ctx, finalKey)
@@ -213,7 +227,7 @@ func (d *driver) Increment(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) Decrement(ctx context.Context, key string) error {
+func (d *redisDriver) Decrement(ctx context.Context, key string) error {
 	finalKey := d.keyWithPrefix(key)
 
 	cmd := d.client.Decr(ctx, finalKey)
@@ -223,7 +237,7 @@ func (d *driver) Decrement(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+func (d *redisDriver) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
 	keyForTags := getTagKey(tag)
 
 	cmd := d.client.SMembers(ctx, keyForTags)
@@ -233,7 +247,7 @@ func (d *driver) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 	return cmd.Val(), nil
 }
 
-func (d *driver) RemoveByTags(ctx context.Context, tags []string) error {
+func (d *redisDriver) RemoveByTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
 		err := d.RemoveByTag(ctx, tag)
 		if err != nil {
@@ -248,15 +262,15 @@ func getTagKey(tag string) string {
 	return fmt.Sprintf("tag:%s", tag)
 }
 
-func (d *driver) keyWithPrefix(key string) string {
+func (d *redisDriver) keyWithPrefix(key string) string {
 	return fmt.Sprintf("%s:%s", d.prefix, key)
 }
 
-func (d *driver) Close() error {
+func (d *redisDriver) Close() error {
 	return d.client.Close()
 }
 
-func (d *driver) Ping() error {
+func (d *redisDriver) Ping() error {
 	ctx := context.Background()
 	err := d.client.Ping(ctx).Err()
 	if err != nil {
