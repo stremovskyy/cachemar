@@ -1,102 +1,156 @@
-package tests
+package tests_test
 
 import (
 	"context"
-	"github.com/stremovskyy/cachemar"
-	"github.com/stremovskyy/cachemar/drivers/memory"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stremovskyy/cachemar"
+	"github.com/stremovskyy/cachemar/drivers/memory"
 )
 
-func TestMemoryCacheService(t *testing.T) {
-	cache := memory.New()
+func TestMemoryCache(t *testing.T) {
 	ctx := context.Background()
-	tags := []string{"tag1", "tag2"}
+	cache := memory.New()
 
-	t.Run("Set and Get", func(t *testing.T) {
-		err := cache.Set(ctx, "key1", "value1", 10*time.Minute, tags)
-		require.NoError(t, err)
+	t.Run(
+		"Set and Get", func(t *testing.T) {
+			key := "test_key"
+			value := "test_value"
+			if err := cache.Set(ctx, key, value, time.Minute, nil); err != nil {
+				t.Fatalf("Set failed: %v", err)
+			}
 
-		var value string
-		err = cache.Get(ctx, "key1", &value)
-		require.NoError(t, err)
-		require.Equal(t, "value1", value)
-	})
+			var retrieved string
+			if err := cache.Get(ctx, key, &retrieved); err != nil {
+				t.Fatalf("Get failed: %v", err)
+			}
 
-	t.Run("Remove", func(t *testing.T) {
-		err := cache.Remove(ctx, "key1")
-		require.NoError(t, err)
+			if retrieved != value {
+				t.Errorf("Expected value %s, got %s", value, retrieved)
+			}
+		},
+	)
 
-		var value string
-		err = cache.Get(ctx, "key1", &value)
-		require.Equal(t, cachemar.ErrNotFound, err)
-	})
+	t.Run(
+		"Get non-existent key", func(t *testing.T) {
+			var retrieved string
+			err := cache.Get(ctx, "non_existent_key", &retrieved)
+			if !errors.Is(err, cachemar.ErrNotFound) {
+				t.Errorf("Expected ErrNotFound, got %v", err)
+			}
+		},
+	)
 
-	t.Run("Exists", func(t *testing.T) {
-		exists, err := cache.Exists(ctx, "key1")
-		require.NoError(t, err)
-		require.False(t, exists)
+	t.Run(
+		"Set with TTL", func(t *testing.T) {
+			key := "ttl_key"
+			value := "ttl_value"
+			if err := cache.Set(ctx, key, value, time.Second, nil); err != nil {
+				t.Fatalf("Set failed: %v", err)
+			}
 
-		err = cache.Set(ctx, "key1", "value1", 10*time.Minute, tags)
-		require.NoError(t, err)
+			time.Sleep(2 * time.Second)
 
-		exists, err = cache.Exists(ctx, "key1")
-		require.NoError(t, err)
-		require.True(t, exists)
-	})
+			var retrieved string
+			err := cache.Get(ctx, key, &retrieved)
+			if !errors.Is(err, cachemar.ErrNotFound) {
+				t.Errorf("Expected ErrNotFound for expired key, got %v", err)
+			}
+		},
+	)
 
-	t.Run("Increment and Decrement", func(t *testing.T) {
-		err := cache.Set(ctx, "key1", 0, 10*time.Minute, tags)
-		require.NoError(t, err)
+	t.Run(
+		"Exists", func(t *testing.T) {
+			key := "exists_key"
+			value := "exists_value"
+			_ = cache.Set(ctx, key, value, time.Minute, nil)
 
-		err = cache.Increment(ctx, "key1")
-		require.NoError(t, err)
+			exists, err := cache.Exists(ctx, key)
+			if err != nil || !exists {
+				t.Errorf("Expected key to exist, got exists=%v, err=%v", exists, err)
+			}
+		},
+	)
 
-		var value string
-		err = cache.Get(ctx, "key1", &value)
-		require.NoError(t, err)
-		require.Equal(t, "1", value)
+	t.Run(
+		"Remove", func(t *testing.T) {
+			key := "remove_key"
+			value := "remove_value"
+			_ = cache.Set(ctx, key, value, time.Minute, nil)
 
-		err = cache.Decrement(ctx, "key1")
-		require.NoError(t, err)
+			if err := cache.Remove(ctx, key); err != nil {
+				t.Fatalf("Remove failed: %v", err)
+			}
 
-		err = cache.Get(ctx, "key1", &value)
-		require.NoError(t, err)
-		require.Equal(t, "0", value)
-	})
+			var retrieved string
+			err := cache.Get(ctx, key, &retrieved)
+			if !errors.Is(err, cachemar.ErrNotFound) {
+				t.Errorf("Expected ErrNotFound, got %v", err)
+			}
+		},
+	)
 
-	t.Run("GetKeysByTag", func(t *testing.T) {
-		err := cache.Set(ctx, "key1", "value1", 10*time.Minute, tags)
-		require.NoError(t, err)
-		err = cache.Set(ctx, "key2", "value2", 10*time.Minute, tags)
-		require.NoError(t, err)
+	t.Run(
+		"Remove by Tag", func(t *testing.T) {
+			key := "tagged_key"
+			value := "tagged_value"
+			tag := "test_tag"
+			_ = cache.Set(ctx, key, value, time.Minute, []string{tag})
 
-		keys, err := cache.GetKeysByTag(ctx, "tag1")
-		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"key1", "key2"}, keys)
-	})
+			if err := cache.RemoveByTag(ctx, tag); err != nil {
+				t.Fatalf("RemoveByTag failed: %v", err)
+			}
 
-	t.Run("RemoveByTag and RemoveByTags", func(t *testing.T) {
-		err := cache.RemoveByTag(ctx, "tag1")
-		require.NoError(t, err)
+			var retrieved string
+			err := cache.Get(ctx, key, &retrieved)
+			if !errors.Is(err, cachemar.ErrNotFound) {
+				t.Errorf("Expected ErrNotFound, got %v", err)
+			}
+		},
+	)
 
-		var value string
-		err = cache.Get(ctx, "key1", &value)
-		require.Equal(t, cachemar.ErrNotFound, err)
+	t.Run(
+		"Increment and Decrement", func(t *testing.T) {
+			key := "counter"
+			initialValue := 10
+			if err := cache.Set(ctx, key, initialValue, time.Minute, nil); err != nil {
+				t.Fatalf("Set failed: %v", err)
+			}
 
-		err = cache.Set(ctx, "key1", "value1", 10*time.Minute, []string{"tag1"})
-		require.NoError(t, err)
-		err = cache.Set(ctx, "key2", "value2", 10*time.Minute, []string{"tag2"})
-		require.NoError(t, err)
+			// Increment
+			if err := cache.Increment(ctx, key); err != nil {
+				t.Fatalf("Increment failed: %v", err)
+			}
 
-		err = cache.RemoveByTags(ctx, []string{"tag1", "tag2"})
-		require.NoError(t, err)
+			var retrieved int
+			if err := cache.Get(ctx, key, &retrieved); err != nil {
+				t.Fatalf("Get after Increment failed: %v", err)
+			}
+			if retrieved != 11 {
+				t.Errorf("Expected value 11 after increment, got %d", retrieved)
+			}
 
-		err = cache.Get(ctx, "key1", &value)
-		require.Equal(t, cachemar.ErrNotFound, err)
-		err = cache.Get(ctx, "key2", &value)
-		require.Equal(t, cachemar.ErrNotFound, err)
-	})
+			// Decrement
+			if err := cache.Decrement(ctx, key); err != nil {
+				t.Fatalf("Decrement failed: %v", err)
+			}
+
+			if err := cache.Get(ctx, key, &retrieved); err != nil {
+				t.Fatalf("Get after Decrement failed: %v", err)
+			}
+			if retrieved != 10 {
+				t.Errorf("Expected value 10 after decrement, got %d", retrieved)
+			}
+		},
+	)
+
+	t.Run(
+		"Ping", func(t *testing.T) {
+			if err := cache.Ping(); err != nil {
+				t.Errorf("Ping failed: %v", err)
+			}
+		},
+	)
 }

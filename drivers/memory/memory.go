@@ -7,7 +7,6 @@ import (
 	"encoding/gob"
 	"errors"
 	"io"
-	"strconv"
 	"sync"
 	"time"
 
@@ -31,10 +30,24 @@ func New() cachemar.Cacher {
 	}
 }
 
+func uniqueTags(tags []string) []string {
+	tagSet := make(map[string]struct{})
+	for _, tag := range tags {
+		tagSet[tag] = struct{}{}
+	}
+
+	unique := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		unique = append(unique, tag)
+	}
+	return unique
+}
+
 func (d *memory) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	tags = uniqueTags(tags)
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 
@@ -126,6 +139,10 @@ func (d *memory) RemoveByTag(ctx context.Context, tag string) error {
 	defer d.mu.Unlock()
 
 	for key, item := range d.items {
+		if item.ExpiryTime.Before(time.Now()) {
+			delete(d.items, key)
+			continue
+		}
 		for _, itemTag := range item.Tags {
 			if itemTag == tag {
 				delete(d.items, key)
@@ -137,9 +154,17 @@ func (d *memory) RemoveByTag(ctx context.Context, tag string) error {
 }
 
 func (d *memory) RemoveByTags(ctx context.Context, tags []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	for _, tag := range tags {
-		if err := d.RemoveByTag(ctx, tag); err != nil {
-			return err
+		for key, item := range d.items {
+			for _, itemTag := range item.Tags {
+				if itemTag == tag {
+					delete(d.items, key)
+					break
+				}
+			}
 		}
 	}
 	return nil
@@ -160,18 +185,43 @@ func (d *memory) Increment(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	item, found := d.items[key]
-	if !found {
-		return errors.New("key not found")
+	item, exists := d.items[key]
+	if !exists || item.ExpiryTime.Before(time.Now()) {
+		return errors.New("key not found or expired")
 	}
 
-	intValue, err := strconv.Atoi(string(item.Value))
+	// Decompress the value
+	decompressedValue, err := decompressData(item.Value)
 	if err != nil {
+		return err
+	}
+
+	// Decode the value into an integer
+	var intValue int
+	buf := bytes.NewBuffer(decompressedValue)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&intValue); err != nil {
 		return errors.New("value is not an integer")
 	}
 
+	// Increment the value
 	intValue++
-	item.Value = []byte(strconv.Itoa(intValue))
+
+	// Re-encode and compress the value
+	var newBuf bytes.Buffer
+	enc := gob.NewEncoder(&newBuf)
+	if err := enc.Encode(intValue); err != nil {
+		return err
+	}
+
+	compressedValue, err := compressData(newBuf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	// Update the item in the cache
+	item.Value = compressedValue
+	d.items[key] = item
 
 	return nil
 }
@@ -180,18 +230,43 @@ func (d *memory) Decrement(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	item, found := d.items[key]
-	if !found {
-		return errors.New("key not found")
+	item, exists := d.items[key]
+	if !exists || item.ExpiryTime.Before(time.Now()) {
+		return errors.New("key not found or expired")
 	}
 
-	intValue, err := strconv.Atoi(string(item.Value))
+	// Decompress the value
+	decompressedValue, err := decompressData(item.Value)
 	if err != nil {
+		return err
+	}
+
+	// Decode the value into an integer
+	var intValue int
+	buf := bytes.NewBuffer(decompressedValue)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&intValue); err != nil {
 		return errors.New("value is not an integer")
 	}
 
+	// Decrement the value
 	intValue--
-	item.Value = []byte(strconv.Itoa(intValue))
+
+	// Re-encode and compress the value
+	var newBuf bytes.Buffer
+	enc := gob.NewEncoder(&newBuf)
+	if err := enc.Encode(intValue); err != nil {
+		return err
+	}
+
+	compressedValue, err := compressData(newBuf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	// Update the item in the cache
+	item.Value = compressedValue
+	d.items[key] = item
 
 	return nil
 }
@@ -202,6 +277,9 @@ func (d *memory) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 
 	var activeKeys []string
 	for key, item := range d.items {
+		if item.ExpiryTime.Before(time.Now()) {
+			continue
+		}
 		for _, itemTag := range item.Tags {
 			if itemTag == tag {
 				activeKeys = append(activeKeys, key)
@@ -209,7 +287,6 @@ func (d *memory) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 			}
 		}
 	}
-
 	return activeKeys, nil
 }
 
