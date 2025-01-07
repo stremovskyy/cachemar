@@ -44,6 +44,10 @@ func (c *chained) RemoveFromChain(name string) {
 // Implementing the Manager interface methods
 
 func (c *chained) Register(name string, manager Cacher) {
+	if c.debug {
+		fmt.Printf("Registering %s to chained manager\n", name)
+	}
+
 	c.m.Register(name, manager)
 }
 
@@ -71,9 +75,11 @@ func (c *chained) Chain() ChainedManager {
 	return c
 }
 
-// Implementing the Cacher interface methods with chaining logic
-
 func (c *chained) Set(ctx context.Context, key string, value interface{}, ttl time.Duration, tags []string) error {
+	if c.debug {
+		fmt.Printf("Set key %s in chain\n", key)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -82,6 +88,7 @@ func (c *chained) Set(ctx context.Context, key string, value interface{}, ttl ti
 			errors = append(errors, err)
 		}
 	}
+
 	if len(errors) > 0 {
 		return fmt.Errorf("errors occurred while setting value in chain: %v", errors)
 	}
@@ -89,6 +96,10 @@ func (c *chained) Set(ctx context.Context, key string, value interface{}, ttl ti
 }
 
 func (c *chained) Get(ctx context.Context, key string, value interface{}) error {
+	if c.debug {
+		fmt.Printf("Get key %s from chain\n", key)
+	}
+
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
 		err := manager.Get(ctx, key, value)
@@ -102,9 +113,11 @@ func (c *chained) Get(ctx context.Context, key string, value interface{}) error 
 	return fmt.Errorf("value not found in any cache manager")
 }
 
-// ... [Previous code]
-
 func (c *chained) Remove(ctx context.Context, key string) error {
+	if c.debug {
+		fmt.Printf("Remove key %s from chain\n", key)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -120,6 +133,10 @@ func (c *chained) Remove(ctx context.Context, key string) error {
 }
 
 func (c *chained) RemoveByTag(ctx context.Context, tag string) error {
+	if c.debug {
+		fmt.Printf("Remove by tag %s from chain\n", tag)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -135,6 +152,10 @@ func (c *chained) RemoveByTag(ctx context.Context, tag string) error {
 }
 
 func (c *chained) RemoveByTags(ctx context.Context, tags []string) error {
+	if c.debug {
+		fmt.Printf("Remove by tags %v from chain\n", tags)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -150,6 +171,10 @@ func (c *chained) RemoveByTags(ctx context.Context, tags []string) error {
 }
 
 func (c *chained) Exists(ctx context.Context, key string) (bool, error) {
+	if c.debug {
+		fmt.Printf("Check existence of key %s in chain\n", key)
+	}
+
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
 		exists, err := manager.Exists(ctx, key)
@@ -164,6 +189,10 @@ func (c *chained) Exists(ctx context.Context, key string) (bool, error) {
 }
 
 func (c *chained) Increment(ctx context.Context, key string) error {
+	if c.debug {
+		fmt.Printf("Increment key %s in chain\n", key)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -179,6 +208,10 @@ func (c *chained) Increment(ctx context.Context, key string) error {
 }
 
 func (c *chained) Decrement(ctx context.Context, key string) error {
+	if c.debug {
+		fmt.Printf("Decrement key %s in chain\n", key)
+	}
+
 	var errors []error
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
@@ -194,6 +227,10 @@ func (c *chained) Decrement(ctx context.Context, key string) error {
 }
 
 func (c *chained) GetKeysByTag(ctx context.Context, tag string) ([]string, error) {
+	if c.debug {
+		fmt.Printf("Get keys by tag %s from chain\n", tag)
+	}
+
 	var allKeys []string
 	for _, managerName := range c.chain {
 		manager := c.m.managers[managerName]
