@@ -67,7 +67,10 @@ func (d *memcached) Set(ctx context.Context, key string, value interface{}, ttl 
 			if err != nil {
 				return err
 			}
-			d.client.Set(&memcache.Item{Key: tagKey, Value: tagValueBytes})
+			err = d.client.Set(&memcache.Item{Key: tagKey, Value: tagValueBytes})
+			if err != nil {
+				return fmt.Errorf("failed to set tag key-value pair in Memcached: %v", err)
+			}
 		}
 
 	}

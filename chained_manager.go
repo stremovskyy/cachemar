@@ -10,6 +10,11 @@ type chained struct {
 	m        *manager
 	chain    []string
 	fallback string
+	debug    bool
+}
+
+func (c *chained) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 func newChained(m *manager) ChainedManager {
