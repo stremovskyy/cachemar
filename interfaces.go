@@ -64,6 +64,9 @@ type Manager interface {
 
 	// Cacher is embedded to allow the manager  to act as a Cacher itself, proxying calls to the current cache manager.
 	Cacher
+
+	// SetDebug sets the debug mode for the cache manager.
+	SetDebug(debug bool)
 }
 
 // ChainedManager is a cache manager that allows multiple cache managers to be chained together.
