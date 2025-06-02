@@ -107,7 +107,7 @@ func (c *manager) RemoveByTag(ctx context.Context, tag string) error {
 // RemoveByTags forwards the "RemoveByTags" operation to the current cache manager.
 func (c *manager) RemoveByTags(ctx context.Context, tags []string) error {
 	if c.debug {
-		fmt.Printf("Removing cache tags: %v\n", tags)
+		fmt.Printf("Removing by cache tags: %v\n", tags)
 	}
 
 	return c.Current().RemoveByTags(ctx, tags)

@@ -2,11 +2,13 @@ package tests
 
 import (
 	"context"
-	"github.com/stremovskyy/cachemar"
-	"github.com/stremovskyy/cachemar/drivers/memcached"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/stremovskyy/cachemar"
+	"github.com/stremovskyy/cachemar/drivers/memcached"
 )
 
 const testPrefix = "test"
@@ -14,10 +16,12 @@ const testPrefix = "test"
 var memcacheCacheService cachemar.Cacher
 
 func setup() {
-	memcacheCacheService = memcached.New(&memcached.Options{
-		Servers: []string{"localhost:11211"},
-		Prefix:  testPrefix,
-	})
+	memcacheCacheService = memcached.New(
+		&memcached.Options{
+			Servers: []string{"127.0.0.1:11211"},
+			Prefix:  testPrefix,
+		},
+	)
 }
 
 func TestSetGet(t *testing.T) {
@@ -25,7 +29,10 @@ func TestSetGet(t *testing.T) {
 	ctx := context.Background()
 
 	err := memcacheCacheService.Set(ctx, "key", "value", 1*time.Second, []string{"tag1", "tag2"})
-	assert.NoError(t, err)
+	if err != nil {
+		t.Skipf("Memcached not available: %v", err)
+		return
+	}
 
 	var value string
 	err = memcacheCacheService.Get(ctx, "key", &value)
@@ -41,7 +48,10 @@ func TestRemoveByTag(t *testing.T) {
 	ctx := context.Background()
 
 	err := memcacheCacheService.Set(ctx, "key1", "value", 1*time.Second, []string{"tag1"})
-	assert.NoError(t, err)
+	if err != nil {
+		t.Skipf("Memcached not available: %v", err)
+		return
+	}
 
 	err = memcacheCacheService.Set(ctx, "key2", "value", 1*time.Second, []string{"tag2"})
 	assert.NoError(t, err)
@@ -66,7 +76,10 @@ func TestIncrementDecrement(t *testing.T) {
 	ctx := context.Background()
 
 	err := memcacheCacheService.Set(ctx, "key", "1", 1*time.Minute, []string{})
-	assert.NoError(t, err)
+	if err != nil {
+		t.Skipf("Memcached not available: %v", err)
+		return
+	}
 
 	err = memcacheCacheService.Increment(ctx, "key")
 	assert.NoError(t, err)

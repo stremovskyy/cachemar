@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,30 +17,181 @@ import (
 	"github.com/stremovskyy/cachemar"
 )
 
-// RedisCacheService is a service for caching data in Redis
+// redisClient is an interface that abstracts redis.Client and redis.ClusterClient
+type redisClient interface {
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	Exists(ctx context.Context, keys ...string) *redis.IntCmd
+	Incr(ctx context.Context, key string) *redis.IntCmd
+	Decr(ctx context.Context, key string) *redis.IntCmd
+	SAdd(ctx context.Context, key string, members ...interface{}) *redis.IntCmd
+	SMembers(ctx context.Context, key string) *redis.StringSliceCmd
+	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
+	Ping(ctx context.Context) *redis.StatusCmd
+	Close() error
+}
+
+// redisDriver is a service for caching data in Redis (single instance or cluster)
 type redisDriver struct {
 	mu       sync.Mutex
-	client   *redis.Client
+	client   redisClient
 	prefix   string
 	compress bool // New field to enable/disable Gzip compression
 }
 
 type Options struct {
-	DSN                string
-	Password           string
-	Database           int
+	DSN      string
+	Password string
+	Database int
+
+	ClusterAddrs   []string // If provided, cluster mode will be used
+	ClusterOptions *ClusterOptions
+
 	CompressionEnabled bool
 	Prefix             string
+	TLSConfig          *tls.Config
+}
+
+type ClusterOptions struct {
+	MaxRedirects   int
+	ReadOnly       bool
+	RouteByLatency bool
+	RouteRandomly  bool
+
+	PoolSize     int
+	PoolTimeout  time.Duration
+	MinIdleConns int
+	MaxIdleConns int
+
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+// NewSingleInstanceOptions creates options for a single Redis instance
+func NewSingleInstanceOptions(dsn, password string, database int) *Options {
+	return &Options{
+		DSN:      dsn,
+		Password: password,
+		Database: database,
+		Prefix:   "cache",
+	}
+}
+
+// NewClusterOptions creates options for Redis cluster mode
+func NewClusterOptions(clusterAddrs []string, password string) *Options {
+	return &Options{
+		ClusterAddrs: clusterAddrs,
+		Password:     password,
+		Prefix:       "cache",
+		ClusterOptions: &ClusterOptions{
+			MaxRedirects: 3,
+			PoolSize:     10,
+			PoolTimeout:  time.Second * 30,
+			MinIdleConns: 1,
+			MaxIdleConns: 3,
+			DialTimeout:  time.Second * 5,
+			ReadTimeout:  time.Second * 5,
+			WriteTimeout: time.Second * 5,
+		},
+	}
+}
+
+func (o *Options) WithCompression() *Options {
+	o.CompressionEnabled = true
+	return o
+}
+
+func (o *Options) WithPrefix(prefix string) *Options {
+	o.Prefix = prefix
+	return o
+}
+
+func (o *Options) WithTLS(config *tls.Config) *Options {
+	o.TLSConfig = config
+	return o
+}
+
+func (o *Options) WithClusterConfig(config *ClusterOptions) *Options {
+	o.ClusterOptions = config
+	return o
+}
+
+func DefaultClusterOptions() *ClusterOptions {
+	return &ClusterOptions{
+		MaxRedirects:   3,
+		ReadOnly:       false,
+		RouteByLatency: false,
+		RouteRandomly:  false,
+		PoolSize:       10,
+		PoolTimeout:    time.Second * 30,
+		MinIdleConns:   1,
+		MaxIdleConns:   3,
+		DialTimeout:    time.Second * 5,
+		ReadTimeout:    time.Second * 5,
+		WriteTimeout:   time.Second * 5,
+	}
 }
 
 func New(options *Options) cachemar.Cacher {
-	client := redis.NewClient(
-		&redis.Options{
-			Addr:     options.DSN,
-			Password: options.Password, // Set password if required
-			DB:       options.Database, // Use default database
-		},
-	)
+	var client redisClient
+
+	// Determine whether to use cluster mode or single instance
+	if len(options.ClusterAddrs) > 0 {
+		// Cluster mode
+		clusterOpts := &redis.ClusterOptions{
+			Addrs:     options.ClusterAddrs,
+			Password:  options.Password,
+			TLSConfig: options.TLSConfig,
+		}
+
+		// Apply cluster-specific options if provided
+		if options.ClusterOptions != nil {
+			if options.ClusterOptions.MaxRedirects > 0 {
+				clusterOpts.MaxRedirects = options.ClusterOptions.MaxRedirects
+			}
+			clusterOpts.ReadOnly = options.ClusterOptions.ReadOnly
+			clusterOpts.RouteByLatency = options.ClusterOptions.RouteByLatency
+			clusterOpts.RouteRandomly = options.ClusterOptions.RouteRandomly
+
+			// Connection pool options
+			if options.ClusterOptions.PoolSize > 0 {
+				clusterOpts.PoolSize = options.ClusterOptions.PoolSize
+			}
+			if options.ClusterOptions.PoolTimeout > 0 {
+				clusterOpts.PoolTimeout = options.ClusterOptions.PoolTimeout
+			}
+			if options.ClusterOptions.MinIdleConns > 0 {
+				clusterOpts.MinIdleConns = options.ClusterOptions.MinIdleConns
+			}
+			if options.ClusterOptions.MaxIdleConns > 0 {
+				clusterOpts.MaxIdleConns = options.ClusterOptions.MaxIdleConns
+			}
+
+			if options.ClusterOptions.DialTimeout > 0 {
+				clusterOpts.DialTimeout = options.ClusterOptions.DialTimeout
+			}
+			if options.ClusterOptions.ReadTimeout > 0 {
+				clusterOpts.ReadTimeout = options.ClusterOptions.ReadTimeout
+			}
+			if options.ClusterOptions.WriteTimeout > 0 {
+				clusterOpts.WriteTimeout = options.ClusterOptions.WriteTimeout
+			}
+		}
+
+		client = redis.NewClusterClient(clusterOpts)
+	} else {
+		// Single instance mode (backward compatible)
+		clientOpts := &redis.Options{
+			Addr:      options.DSN,
+			Password:  options.Password,
+			DB:        options.Database,
+			TLSConfig: options.TLSConfig,
+		}
+
+		client = redis.NewClient(clientOpts)
+	}
 
 	return &redisDriver{
 		client:   client,
@@ -128,12 +280,17 @@ func compressData(data []byte) ([]byte, error) {
 func (c *redisDriver) Get(ctx context.Context, key string, value interface{}) error {
 	finalKey := c.keyWithPrefix(key)
 
-	data, err := c.client.Get(ctx, finalKey).Bytes()
-	if err != nil {
+	cmd := c.client.Get(ctx, finalKey)
+	if err := cmd.Err(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return fmt.Errorf("key not found: %s", finalKey)
 		}
 		return fmt.Errorf("failed to get value from Redis: %v", err)
+	}
+
+	data, err := cmd.Bytes()
+	if err != nil {
+		return fmt.Errorf("failed to get bytes from Redis response: %v", err)
 	}
 
 	// Check if the data is compressed

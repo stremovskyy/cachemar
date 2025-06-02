@@ -4,32 +4,42 @@ CacheMar is a versatile cache management library crafted to offer a seamless int
 
 ## Table of Contents
 
-* [Features](#features)
-* [Installation](#installation)
-* [Getting Started](#getting-started)
-* [Supported Drivers](#supported-drivers)
-* [Usage](#usage)
-    * [Creating a CacheMar Service](#creating-a-cachemar-service)
-    * [Registering Caching Drivers](#registering-caching-drivers)
-    * [Setting the Current Cache Driver](#setting-the-current-cache-driver)
-    * [Using the Cache](#using-the-cache)
-    * [Using Tags for Invalidation](#using-tags-for-invalidation)
-    * [Using Chains](#using-chains)
-    * [Setting a Fallback](#setting-a-fallback)
-    * [Overriding the Chain](#overriding-the-chain)
-    * [Other Cache Operations](#other-cache-operations)
-* [Examples](#examples)
-    * [In-Memory Cache Example](#in-memory-cache-example)
-    * [Memcached Example](#memcached-example)
-    * [Redis Example](#redis-example)
-    * [Using Tags for Invalidation](#using-tags-for-invalidation)
-* [Contributing](#contributing)
-* [License](#license)
+- [CacheMar - Cache Management Library](#cachemar---cache-management-library)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Installation](#installation)
+  - [Getting Started](#getting-started)
+  - [Supported Drivers](#supported-drivers)
+  - [Usage](#usage)
+    - [Creating a CacheMar Service](#creating-a-cachemar-service)
+    - [Registering Caching Drivers](#registering-caching-drivers)
+    - [Setting the Current Cache Driver](#setting-the-current-cache-driver)
+    - [Using the Cache](#using-the-cache)
+    - [Using Tags for Invalidation](#using-tags-for-invalidation)
+    - [Using Chains](#using-chains)
+    - [Using Chaining](#using-chaining)
+    - [Setting a Fallback](#setting-a-fallback)
+    - [Overriding the Chain](#overriding-the-chain)
+    - [Other Cache Operations](#other-cache-operations)
+  - [Examples](#examples)
+    - [In-Memory Cache Example](#in-memory-cache-example)
+    - [Memcached Example](#memcached-example)
+    - [Redis Example](#redis-example)
+    - [Redis Cluster Example](#redis-cluster-example)
+- [License](#license)
+  - [Testing](#testing)
+    - [Quick Test Commands](#quick-test-commands)
+    - [Test Environment Setup](#test-environment-setup)
+    - [Automated Testing](#automated-testing)
+    - [Docker Testing Environment](#docker-testing-environment)
+  - [Documentation](#documentation)
+- [Contributing](#contributing)
 
 ## Features
 
 * **Unified API**: A consistent interface across various caching drivers, making it easy to switch or combine them.
-* **Multiple Drivers**: Built-in support for in-memory caching, Memcached, and more. Extendable for other caching solutions.
+* **Multiple Drivers**: Built-in support for in-memory caching, Memcached, Redis single instance, and Redis Cluster.
+* **Redis Cluster Support**: Full Redis Cluster support with automatic failover, load balancing, and advanced configuration options.
 * **Dynamic Switching**: Seamlessly switch between caching drivers with minimal code changes.
 * **Chaining Mechanism**: Chain multiple cache managers for a fallback mechanism. If one manager doesn't have the data or encounters an error, the next one in the chain is used.
 * **Tag-based Caching**: Invalidate cache entries easily using tags.
@@ -37,7 +47,8 @@ CacheMar is a versatile cache management library crafted to offer a seamless int
 * **Context Compatibility**: Fully compatible with Go's context package, allowing for request-scoped caching.
 * **Fallback Support**: Set a default fallback cache manager to be used if none in the chain have the data.
 * **Chain Override**: Temporarily override the chain for specific calls without affecting the original configuration.
-
+* **Advanced Redis Features**: TLS/SSL support, connection pooling, compression, and flexible routing options.
+* **100% Backward Compatibility**: Existing Redis single-instance code works unchanged.
 
 ## Installation
 To use CacheMar in your Go project, you can install it using the go get command:
@@ -63,7 +74,12 @@ CacheMar seamlessly integrates with a variety of caching drivers, including:
 
 1. **In-Memory Cache**: Leveraging Go's sync.Map, this driver offers a straightforward in-memory caching solution. It's an ideal choice for applications seeking a temporary and nimble caching mechanism.
 2. **Memcached**: With CacheMar, interfacing with Memcached—a renowned distributed caching system—becomes effortless. It's tailored for expansive applications necessitating cache distribution across multiple instances or servers.
-3. **Redis**: CacheMar also facilitates smooth interactions with Redis, a prominent in-memory data structure store. Like Memcached, it's apt for large-scale applications aiming for distributed caching solutions.
+3. **Redis**: CacheMar facilitates smooth interactions with Redis, a prominent in-memory data structure store. Supports both single instance and cluster modes with full backward compatibility.
+   - **Single Instance**: Traditional Redis setup with one server
+   - **Cluster Mode**: Distributed Redis cluster for high availability and scalability
+   - **TLS Support**: Secure connections with SSL/TLS encryption
+   - **Connection Pooling**: Optimized connection management for performance
+   - **Compression**: Optional Gzip compression for stored data
 
 
 ## Usage
@@ -297,19 +313,18 @@ func main() {
         "time"
 
         "github.com/stremovskyy/cachemar"
-        "github.com/stremovskyy/cachemar/redis"
+        "github.com/stremovskyy/cachemar/drivers/redis"
     )
 
     func main() {
         cacheService := cachemar.New()
 
-        redisOptions := &redis.Options{
-            Addr:     "localhost:6379",
-            Password: "",
-            DB:       0,
-            Prefix:   "my-cache",
-        }
-        redisCache := redis.NewCacheService(redisOptions)
+        // Single Redis instance (backward compatible)
+        redisOptions := redis.NewSingleInstanceOptions("localhost:6379", "", 0).
+            WithCompression().
+            WithPrefix("my-cache")
+        
+        redisCache := redis.New(redisOptions)
         cacheService.Register("redis", redisCache)
 
         ctx := context.Background()
@@ -318,6 +333,89 @@ func main() {
         ttl := 5 * time.Minute
 
         // Set a value in the cache
+        err := cacheService.Set(ctx, key, value, ttl, nil)
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        // Get a value from the cache
+        var retrievedValue string
+        err = cacheService.Get(ctx, key, &retrievedValue)
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        fmt.Println("Retrieved Value:", retrievedValue)
+    }
+```
+
+### Redis Cluster Example
+
+```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "time"
+
+        "github.com/stremovskyy/cachemar"
+        "github.com/stremovskyy/cachemar/drivers/redis"
+    )
+
+    func main() {
+        cacheService := cachemar.New()
+
+        // Redis Cluster configuration
+        clusterOptions := redis.NewClusterOptions(
+            []string{
+                "localhost:7000",
+                "localhost:7001", 
+                "localhost:7002",
+                "localhost:7003",
+                "localhost:7004",
+                "localhost:7005",
+            },
+            "", // cluster password
+        ).WithCompression().WithPrefix("cluster-cache")
+        
+        clusterCache := redis.New(clusterOptions)
+        cacheService.Register("redis-cluster", clusterCache)
+
+        ctx := context.Background()
+        key := "cluster-key"
+        value := map[string]interface{}{
+            "user_id": 123,
+            "name":    "John Doe",
+            "active":  true,
+        }
+        ttl := 1 * time.Hour
+
+        // Set a value in the cluster
+        err := cacheService.Set(ctx, key, value, ttl, []string{"users", "active"})
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        // Get a value from the cluster
+        var retrievedValue map[string]interface{}
+        err = cacheService.Get(ctx, key, &retrievedValue)
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        fmt.Printf("Retrieved Value: %+v\n", retrievedValue)
+        
+        // Get keys by tag
+        keys, err := cacheService.GetKeysByTag(ctx, "users")
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+        
+        fmt.Printf("User keys: %v\n", keys)
+    }
+```
+> 📖 **For comprehensive Redis cluster documentation**, including advanced configuration options, TLS setup, performance tuning, and migration guides, see [Redis Cluster Documentation](docs/REDIS_CLUSTER.md).
         err := cacheService.Set(ctx, key, value, ttl, nil)
         if err != nil {
             fmt.Println("Error:", err)
