@@ -3,7 +3,8 @@ package cachemar
 import "time"
 
 const (
-	DefaultCacheTime = time.Hour
+	DefaultCacheTime     = time.Hour
+	DefaultCheckInterval = time.Second * 5
 )
 
 type CacherName string

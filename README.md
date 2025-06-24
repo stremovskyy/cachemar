@@ -47,6 +47,7 @@ CacheMar is a versatile cache management library crafted to offer a seamless int
 * **Context Compatibility**: Fully compatible with Go's context package, allowing for request-scoped caching.
 * **Fallback Support**: Set a default fallback cache manager to be used if none in the chain have the data.
 * **Chain Override**: Temporarily override the chain for specific calls without affecting the original configuration.
+* **Circuit Breaker Pattern**: Automatically switch to fallback cachers if the primary cacher fails, and switch back when it's available again.
 * **Advanced Redis Features**: TLS/SSL support, connection pooling, compression, and flexible routing options.
 * **100% Backward Compatibility**: Existing Redis single-instance code works unchanged.
 
@@ -193,6 +194,26 @@ For specific calls, you can override the chain without affecting the original ch
 chainedManager.Override("memory", "redis").Get(ctx, "somekey", &value) // This will first check memory, then redis.
 ```
 
+### Using the Circuit Breaker Pattern
+CacheMar supports the circuit breaker pattern to automatically switch to fallback cachers if the primary cacher fails, and switch back when it's available again. This is useful for handling temporary failures in the primary cacher, such as network issues or server restarts.
+
+```go
+// Create a manager with circuit breaker
+manager := cachemar.NewWithOptions(
+    cachemar.WithDebug(),
+    cachemar.WithCircuitBreaker("redis", []string{"memory"}, 5*time.Second),
+)
+
+// Register the cachers
+manager.Register("redis", redisCache)
+manager.Register("memory", memoryCache)
+
+// Use the manager as usual
+err := manager.Set(ctx, "key", "value", time.Minute, nil)
+```
+
+In this example, if the Redis cacher fails, the manager will automatically switch to the memory cacher. It will periodically check if the Redis cacher is back online, and switch back to it when it is.
+
 ### Other Cache Operations
 CacheMar also provides other cache operations like increment and decrement for integer values:
 
@@ -323,7 +344,7 @@ func main() {
         redisOptions := redis.NewSingleInstanceOptions("localhost:6379", "", 0).
             WithCompression().
             WithPrefix("my-cache")
-        
+
         redisCache := redis.New(redisOptions)
         cacheService.Register("redis", redisCache)
 
@@ -378,7 +399,7 @@ func main() {
             },
             "", // cluster password
         ).WithCompression().WithPrefix("cluster-cache")
-        
+
         clusterCache := redis.New(clusterOptions)
         cacheService.Register("redis-cluster", clusterCache)
 
@@ -405,13 +426,13 @@ func main() {
         }
 
         fmt.Printf("Retrieved Value: %+v\n", retrievedValue)
-        
+
         // Get keys by tag
         keys, err := cacheService.GetKeysByTag(ctx, "users")
         if err != nil {
             fmt.Println("Error:", err)
         }
-        
+
         fmt.Printf("User keys: %v\n", keys)
     }
 ```
@@ -460,11 +481,73 @@ func main() {
 
       // Use the chained manager
       err := chainedManager.Get(ctx, "someKey", &value)
-	  
+
 	  // Or in manager 
 	  err := manager.Chain().Get(ctx, "someKey", &value)
     }
 
+```
+
+### Circuit Breaker Pattern Example
+
+```go
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "time"
+
+        "github.com/stremovskyy/cachemar"
+        "github.com/stremovskyy/cachemar/drivers/memory"
+        "github.com/stremovskyy/cachemar/drivers/redis"
+    )
+
+    func main() {
+        // Create a manager with circuit breaker
+        // This will use Redis as the primary cacher and memory as the fallback
+        // It will check if Redis is back online every 5 seconds
+        manager := cachemar.NewWithOptions(
+            cachemar.WithDebug(),
+            cachemar.WithCircuitBreaker(string(cachemar.RedisCacherName), []string{string(cachemar.MemoryCacherName)}, 5*time.Second),
+        )
+
+        // Register the Redis cacher
+        redisOptions := redis.NewSingleInstanceOptions("localhost:6379", "", 0).
+            WithCompression().
+            WithPrefix("my-cache")
+        redisCache := redis.New(redisOptions)
+        manager.Register(string(cachemar.RedisCacherName), redisCache)
+
+        // Register the memory cacher
+        memoryCache := memory.New()
+        manager.Register(string(cachemar.MemoryCacherName), memoryCache)
+
+        // Use the manager as usual
+        ctx := context.Background()
+        key := "my-key"
+        value := "my-value"
+        ttl := 5 * time.Minute
+
+        // Set a value in the cache
+        // If Redis is unavailable, it will automatically use the memory cacher
+        err := manager.Set(ctx, key, value, ttl, nil)
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        // Get a value from the cache
+        // If Redis is unavailable, it will automatically use the memory cacher
+        var retrievedValue string
+        err = manager.Get(ctx, key, &retrievedValue)
+        if err != nil {
+            fmt.Println("Error:", err)
+        }
+
+        fmt.Println("Retrieved Value:", retrievedValue)
+
+        // When Redis comes back online, the manager will automatically switch back to it
+    }
 ```
 
 # License
