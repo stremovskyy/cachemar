@@ -39,6 +39,7 @@ CacheMar is a versatile cache management library crafted to offer a seamless int
 
 * **Unified API**: A consistent interface across various caching drivers, making it easy to switch or combine them.
 * **Multiple Drivers**: Built-in support for in-memory caching, Memcached, Redis single instance, and Redis Cluster.
+* **LRU Memory Protection**: In-memory cache with configurable LRU eviction prevents unlimited memory growth and application crashes.
 * **Redis Cluster Support**: Full Redis Cluster support with automatic failover, load balancing, and advanced configuration options.
 * **Dynamic Switching**: Seamlessly switch between caching drivers with minimal code changes.
 * **Chaining Mechanism**: Chain multiple cache managers for a fallback mechanism. If one manager doesn't have the data or encounters an error, the next one in the chain is used.
@@ -73,7 +74,13 @@ import (
 ## Supported Drivers
 CacheMar seamlessly integrates with a variety of caching drivers, including:
 
-1. **In-Memory Cache**: Leveraging Go's sync.Map, this driver offers a straightforward in-memory caching solution. It's an ideal choice for applications seeking a temporary and nimble caching mechanism.
+1. **In-Memory Cache**: A high-performance in-memory caching solution with LRU (Least Recently Used) eviction support. Features include:
+   - **LRU Eviction**: Configurable maximum cache size with automatic eviction of least recently used items
+   - **Unlimited Mode**: Default unlimited cache size for backward compatibility
+   - **Thread-Safe**: Concurrent access with proper synchronization
+   - **Compression**: Built-in Gzip compression for stored data
+   - **Tag Support**: Tag-based cache invalidation
+   - **Memory Protection**: Prevents application crashes from unlimited memory growth
 2. **Memcached**: With CacheMar, interfacing with Memcached—a renowned distributed caching system—becomes effortless. It's tailored for expansive applications necessitating cache distribution across multiple instances or servers.
 3. **Redis**: CacheMar facilitates smooth interactions with Redis, a prominent in-memory data structure store. Supports both single instance and cluster modes with full backward compatibility.
    - **Single Instance**: Traditional Redis setup with one server
@@ -245,14 +252,24 @@ import (
     "time"
 
     "github.com/stremovskyy/cachemar"
-    "github.com/stremovskyy/cachemar/memory"
+    "github.com/stremovskyy/cachemar/drivers/memory"
 )
 
 func main() {
     cacheService := cachemar.New()
 
-    inMemoryCache := memory.NewMemoryCacheService()
+    // Basic unlimited cache (default behavior)
+    inMemoryCache := memory.New()
     cacheService.Register("in-memory", inMemoryCache)
+
+    // Or create cache with LRU eviction (recommended for production)
+    lruCache := memory.NewWithConfig(memory.Config{
+        MaxSize: 1000, // Maximum 1000 items before LRU eviction
+    })
+    cacheService.Register("lru-memory", lruCache)
+
+    // Use the unlimited cache
+    cacheService.SetCurrent("in-memory")
 
     ctx := context.Background()
     key := "my-key"
@@ -273,6 +290,12 @@ func main() {
     }
 
     fmt.Println("Retrieved Value:", retrievedValue)
+
+    // Switch to LRU cache for memory protection
+    cacheService.SetCurrent("lru-memory")
+    
+    // Now the cache will automatically evict least recently used items
+    // when it reaches 1000 items, preventing memory exhaustion
 }
 
 ```
