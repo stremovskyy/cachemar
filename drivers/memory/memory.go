@@ -2,11 +2,9 @@ package memory
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/gob"
 	"errors"
-	"io"
 	"sync"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 )
 
 type Item struct {
+	Key        string
 	Value      []byte
 	Tags       []string
 	ExpiryTime time.Time
@@ -65,17 +64,28 @@ func (d *memory) removeItem(item *Item) {
 	item.next.prev = item.prev
 }
 
+// removeEntry disconnects an item from the list and map bookkeeping
+func (d *memory) removeEntry(item *Item) {
+	if item == nil || item == d.head || item == d.tail {
+		return
+	}
+	if item.prev == nil || item.next == nil {
+		return
+	}
+
+	d.removeItem(item)
+	delete(d.items, item.Key)
+	if d.size > 0 {
+		d.size--
+	}
+	item.prev = nil
+	item.next = nil
+}
+
 // moveToHead moves an existing item to head
 func (d *memory) moveToHead(item *Item) {
 	d.removeItem(item)
 	d.addToHead(item)
-}
-
-// removeTail removes the last item before tail
-func (d *memory) removeTail() *Item {
-	lastItem := d.tail.prev
-	d.removeItem(lastItem)
-	return lastItem
 }
 
 func (d *memory) evictLRU() {
@@ -83,32 +93,19 @@ func (d *memory) evictLRU() {
 		return
 	}
 
-	d.cleanupExpired()
-
+	now := time.Now()
 	for d.size > d.config.MaxSize {
-		lru := d.removeTail()
-		if lru != d.tail && lru != d.head {
-			for key, item := range d.items {
-				if item == lru {
-					delete(d.items, key)
-					d.size--
-					break
-				}
-			}
-		} else {
+		candidate := d.tail.prev
+		if candidate == d.head {
 			break
 		}
-	}
-}
 
-func (d *memory) cleanupExpired() {
-	now := time.Now()
-	for key, item := range d.items {
-		if item.ExpiryTime.Before(now) {
-			d.removeItem(item)
-			delete(d.items, key)
-			d.size--
+		if d.isExpired(candidate, now) {
+			d.removeEntry(candidate)
+			continue
 		}
+
+		d.removeEntry(candidate)
 	}
 }
 
@@ -137,21 +134,25 @@ func (d *memory) Set(ctx context.Context, key string, value interface{}, ttl tim
 		return err
 	}
 
-	compressedValue, err := compressData(buf.Bytes())
-	if err != nil {
-		return err
+	encodedValue := buf.Bytes()
+
+	expiry := time.Time{}
+	if ttl > 0 {
+		expiry = time.Now().Add(ttl)
 	}
 
 	if existingItem, exists := d.items[key]; exists {
-		existingItem.Value = compressedValue
+		existingItem.Value = encodedValue
 		existingItem.Tags = tags
-		existingItem.ExpiryTime = time.Now().Add(ttl)
+		existingItem.ExpiryTime = expiry
+		existingItem.Key = key
 		d.moveToHead(existingItem)
 	} else {
 		newItem := &Item{
-			Value:      compressedValue,
+			Key:        key,
+			Value:      encodedValue,
 			Tags:       tags,
-			ExpiryTime: time.Now().Add(ttl),
+			ExpiryTime: expiry,
 		}
 
 		d.items[key] = newItem
@@ -164,39 +165,24 @@ func (d *memory) Set(ctx context.Context, key string, value interface{}, ttl tim
 	return nil
 }
 
-func compressData(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-
-	_, err := zw.Write(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
 func (d *memory) Get(ctx context.Context, key string, value interface{}) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	item, exists := d.items[key]
-	if !exists || item.ExpiryTime.Before(time.Now()) {
+	if !exists {
+		return cachemar.ErrNotFound
+	}
+
+	now := time.Now()
+	if d.isExpired(item, now) {
+		d.removeEntry(item)
 		return cachemar.ErrNotFound
 	}
 
 	d.moveToHead(item)
 
-	decompressedValue, err := decompressData(item.Value)
-	if err != nil {
-		return err
-	}
-
-	buf := bytes.NewBuffer(decompressedValue)
+	buf := bytes.NewBuffer(item.Value)
 	dec := gob.NewDecoder(buf)
 
 	if err := dec.Decode(value); err != nil {
@@ -206,89 +192,12 @@ func (d *memory) Get(ctx context.Context, key string, value interface{}) error {
 	return nil
 }
 
-func decompressData(data []byte) ([]byte, error) {
-	zr, err := gzip.NewReader(bytes.NewBuffer(data))
-	if err != nil {
-		return nil, err
-	}
-
-	decompressedData, err := io.ReadAll(zr)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := zr.Close(); err != nil {
-		return nil, err
-	}
-
-	return decompressedData, nil
-}
-
 func (d *memory) Remove(ctx context.Context, key string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if item, exists := d.items[key]; exists {
-		d.removeItem(item)
-		delete(d.items, key)
-		d.size--
-	}
-
-	return nil
-}
-
-func (d *memory) RemoveByTag(ctx context.Context, tag string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	keysToRemove := make([]string, 0)
-	for key, item := range d.items {
-		if item.ExpiryTime.Before(time.Now()) {
-			keysToRemove = append(keysToRemove, key)
-			continue
-		}
-		for _, itemTag := range item.Tags {
-			if itemTag == tag {
-				keysToRemove = append(keysToRemove, key)
-				break
-			}
-		}
-	}
-
-	for _, key := range keysToRemove {
-		if item, exists := d.items[key]; exists {
-			d.removeItem(item)
-			delete(d.items, key)
-			d.size--
-		}
-	}
-
-	return nil
-}
-
-func (d *memory) RemoveByTags(ctx context.Context, tags []string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	keysToRemove := make(map[string]bool)
-
-	for _, tag := range tags {
-		for key, item := range d.items {
-			for _, itemTag := range item.Tags {
-				if itemTag == tag {
-					keysToRemove[key] = true
-					break
-				}
-			}
-		}
-	}
-
-	for key := range keysToRemove {
-		if item, exists := d.items[key]; exists {
-			d.removeItem(item)
-			delete(d.items, key)
-			d.size--
-		}
+		d.removeEntry(item)
 	}
 
 	return nil
@@ -299,7 +208,13 @@ func (d *memory) Exists(ctx context.Context, key string) (bool, error) {
 	defer d.mu.Unlock()
 
 	item, exists := d.items[key]
-	if !exists || item.ExpiryTime.Before(time.Now()) {
+	if !exists {
+		return false, nil
+	}
+
+	now := time.Now()
+	if d.isExpired(item, now) {
+		d.removeEntry(item)
 		return false, nil
 	}
 	return true, nil
@@ -310,21 +225,20 @@ func (d *memory) Increment(ctx context.Context, key string) error {
 	defer d.mu.Unlock()
 
 	item, exists := d.items[key]
-	if !exists || item.ExpiryTime.Before(time.Now()) {
+	if !exists {
+		return errors.New("key not found or expired")
+	}
+
+	now := time.Now()
+	if d.isExpired(item, now) {
+		d.removeEntry(item)
 		return errors.New("key not found or expired")
 	}
 
 	d.moveToHead(item)
 
-	// Decompress the value
-	decompressedValue, err := decompressData(item.Value)
-	if err != nil {
-		return err
-	}
-
-	// Decode the value into an integer
 	var intValue int
-	buf := bytes.NewBuffer(decompressedValue)
+	buf := bytes.NewBuffer(item.Value)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&intValue); err != nil {
 		return errors.New("value is not an integer")
@@ -333,20 +247,15 @@ func (d *memory) Increment(ctx context.Context, key string) error {
 	// Increment the value
 	intValue++
 
-	// Re-encode and compress the value
+	// Re-encode the value
 	var newBuf bytes.Buffer
 	enc := gob.NewEncoder(&newBuf)
 	if err := enc.Encode(intValue); err != nil {
 		return err
 	}
 
-	compressedValue, err := compressData(newBuf.Bytes())
-	if err != nil {
-		return err
-	}
-
 	// Update the item in the cache
-	item.Value = compressedValue
+	item.Value = newBuf.Bytes()
 
 	return nil
 }
@@ -356,21 +265,20 @@ func (d *memory) Decrement(ctx context.Context, key string) error {
 	defer d.mu.Unlock()
 
 	item, exists := d.items[key]
-	if !exists || item.ExpiryTime.Before(time.Now()) {
+	if !exists {
+		return errors.New("key not found or expired")
+	}
+
+	now := time.Now()
+	if d.isExpired(item, now) {
+		d.removeEntry(item)
 		return errors.New("key not found or expired")
 	}
 
 	d.moveToHead(item)
 
-	// Decompress the value
-	decompressedValue, err := decompressData(item.Value)
-	if err != nil {
-		return err
-	}
-
-	// Decode the value into an integer
 	var intValue int
-	buf := bytes.NewBuffer(decompressedValue)
+	buf := bytes.NewBuffer(item.Value)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&intValue); err != nil {
 		return errors.New("value is not an integer")
@@ -379,20 +287,15 @@ func (d *memory) Decrement(ctx context.Context, key string) error {
 	// Decrement the value
 	intValue--
 
-	// Re-encode and compress the value
+	// Re-encode the value
 	var newBuf bytes.Buffer
 	enc := gob.NewEncoder(&newBuf)
 	if err := enc.Encode(intValue); err != nil {
 		return err
 	}
 
-	compressedValue, err := compressData(newBuf.Bytes())
-	if err != nil {
-		return err
-	}
-
 	// Update the item in the cache
-	item.Value = compressedValue
+	item.Value = newBuf.Bytes()
 
 	return nil
 }
@@ -402,8 +305,10 @@ func (d *memory) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 	defer d.mu.Unlock()
 
 	var activeKeys []string
+	now := time.Now()
 	for key, item := range d.items {
-		if item.ExpiryTime.Before(time.Now()) {
+		if d.isExpired(item, now) {
+			d.removeEntry(item)
 			continue
 		}
 		for _, itemTag := range item.Tags {
@@ -414,6 +319,55 @@ func (d *memory) GetKeysByTag(ctx context.Context, tag string) ([]string, error)
 		}
 	}
 	return activeKeys, nil
+}
+
+func (d *memory) RemoveByTag(ctx context.Context, tag string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := time.Now()
+	for _, item := range d.items {
+		if d.isExpired(item, now) {
+			d.removeEntry(item)
+			continue
+		}
+		for _, itemTag := range item.Tags {
+			if itemTag == tag {
+				d.removeEntry(item)
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+func (d *memory) RemoveByTags(ctx context.Context, tags []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := time.Now()
+	for _, item := range d.items {
+		if d.isExpired(item, now) {
+			d.removeEntry(item)
+			continue
+		}
+		removed := false
+		for _, tag := range tags {
+			if removed {
+				break
+			}
+			for _, itemTag := range item.Tags {
+				if itemTag == tag {
+					d.removeEntry(item)
+					removed = true
+					break
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (d *memory) Close() error {
@@ -435,4 +389,11 @@ func (d *memory) Flush() error {
 
 func (d *memory) Ping() error {
 	return nil
+}
+
+func (d *memory) isExpired(item *Item, now time.Time) bool {
+	if item == nil {
+		return false
+	}
+	return !item.ExpiryTime.IsZero() && item.ExpiryTime.Before(now)
 }
