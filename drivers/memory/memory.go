@@ -395,5 +395,6 @@ func (d *memory) isExpired(item *Item, now time.Time) bool {
 	if item == nil {
 		return false
 	}
-	return !item.ExpiryTime.IsZero() && item.ExpiryTime.Before(now)
+	// Consider expired when the expiry time is at or before now.
+	return !item.ExpiryTime.IsZero() && !item.ExpiryTime.After(now)
 }

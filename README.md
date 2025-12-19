@@ -48,6 +48,7 @@ CacheMar is a versatile cache management library crafted to offer a seamless int
 * **Context Compatibility**: Fully compatible with Go's context package, allowing for request-scoped caching.
 * **Fallback Support**: Set a default fallback cache manager to be used if none in the chain have the data.
 * **Chain Override**: Temporarily override the chain for specific calls without affecting the original configuration.
+* **Cache-Aside Helper**: `Remember` prevents stampedes with singleflight, TTL jitter, and an optional in-process fallback when the primary cache is unavailable.
 * **Circuit Breaker Pattern**: Automatically switch to fallback cachers if the primary cacher fails, and switch back when it's available again.
 * **Advanced Redis Features**: TLS/SSL support, connection pooling, compression, and flexible routing options.
 * **100% Backward Compatibility**: Existing Redis single-instance code works unchanged.
@@ -239,6 +240,44 @@ if err != nil {
     // Handle error
 }
 ```
+
+### Avoiding Stampedes with Remember
+Use `cachemar.Remember` for cache-aside reads with built-in singleflight, TTL jitter, and an optional in-process fallback to keep serving data during cache outages:
+
+```go
+type User struct {
+    ID   int64
+    Name string
+}
+
+// dbLoader will only run once per key thanks to singleflight.
+dbLoader := func(ctx context.Context) (any, error) {
+    return fetchUserFromDB(ctx, 42) // replace with your loader
+}
+
+var user User
+err := cachemar.Remember(
+    ctx,
+    cacheService,           // anything implementing Get/Set (Manager or driver)
+    "user:42",
+    &user,
+    10*time.Minute,         // base TTL
+    []string{"users"},      // optional tags passed to Set
+    dbLoader,
+    cachemar.WithTTLJitter(2*time.Minute), // spread expirations
+    cachemar.WithLocalFallback(30*time.Second), // serve from local memory if cache is down
+)
+if err != nil {
+    // Handle cache/loader error
+}
+```
+
+Available `Remember` options:
+- `WithTTLJitter(max)`: add up to `max` random duration to the TTL to avoid thundering herds.
+- `WithLocalFallback(ttl)`: store the last good value in-process for `ttl` to ride out cache outages.
+- `WithLocalFallbackMaxEntries(n)`: cap the local fallback buffer size.
+- `WithCodec(codec)`: override JSON serialization for the local fallback.
+- `WithFailOnSetError(true)`: propagate cache `Set` errors instead of continuing.
 
 ## Examples
 ### In-Memory Cache Example

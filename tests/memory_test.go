@@ -75,6 +75,31 @@ func TestMemoryCache(t *testing.T) {
 	)
 
 	t.Run(
+		"Exists honors TTL", func(t *testing.T) {
+			key := "ttl_exists_key"
+			value := "ttl_value"
+			_ = cache.Set(ctx, key, value, 50*time.Millisecond, nil)
+
+			exists, err := cache.Exists(ctx, key)
+			if err != nil {
+				t.Fatalf("Exists failed: %v", err)
+			}
+			if !exists {
+				t.Fatalf("Expected key to exist immediately after set")
+			}
+
+			time.Sleep(60 * time.Millisecond)
+			exists, err = cache.Exists(ctx, key)
+			if err != nil {
+				t.Fatalf("Exists after TTL failed: %v", err)
+			}
+			if exists {
+				t.Fatalf("Expected key to expire and not exist")
+			}
+		},
+	)
+
+	t.Run(
 		"Remove", func(t *testing.T) {
 			key := "remove_key"
 			value := "remove_value"
